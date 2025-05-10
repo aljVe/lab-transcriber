@@ -4,7 +4,7 @@
   <img src="docs/images/logo.png" alt="Lab Transcriber Logo" width="200"/>
 </p>
 
-Una aplicación para extraer y estandarizar valores de parámetros clínicos desde informes de laboratorio en formato PDF.
+Una aplicación para extraer y estandarizar valores de parámetros clínicos desde informes de laboratorio en formato PDF. El objetivo es ahorrar tiempo a los profesionales sanitarios, evitándoles transcribir manualmente analíticas.
 
 ## Características
 
