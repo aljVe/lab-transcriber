@@ -1,0 +1,2 @@
+pdfplumber>=0.7.6
+pyperclip>=1.8.2
