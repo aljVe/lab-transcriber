@@ -30,20 +30,15 @@ logger.info(f"Directorio datos/logs: {DATA_DIR}")
 
 # --- Importaciones ---
 try:
-    from .extractor import PDFExtractor as Extractor
-    from .parser import parse_report_text as Parser, get_unrecognized_lines, analyze_detection_success, CONFIG_FILENAME, config_path as PARSER_CONFIG_PATH # Importar ruta config
-    from .formatter import format_summary as Formatter
-    from .gui import launch_gui_tkinter as GuiLauncher
+    from extractor import PDFExtractor as Extractor
+    from parser import parse_report_text as Parser, get_unrecognized_lines, analyze_detection_success, CONFIG_FILENAME, config_path as PARSER_CONFIG_PATH
+    from formatter import format_summary as Formatter
+    from gui import launch_gui_tkinter as GuiLauncher
+    logger.info("Importaciones directas completadas.")
 except ImportError as e:
-    logger.warning(f"Import relativo falló ({e}), intentando directo...")
-    try:
-        from extractor import PDFExtractor as Extractor
-        from parser import parse_report_text as Parser, get_unrecognized_lines, analyze_detection_success, CONFIG_FILENAME, config_path as PARSER_CONFIG_PATH
-        from formatter import format_summary as Formatter
-        from gui import launch_gui_tkinter as GuiLauncher
-        logger.info("Usando importaciones directas.")
-    except ImportError as direct_e:
-        logger.critical(f"Error import módulos: {direct_e}.", exc_info=True); print(f"Error fatal: {direct_e}", file=sys.stderr); sys.exit(1)
+    logger.critical(f"Error import módulos: {e}", exc_info=True)
+    print(f"Error fatal: {e}", file=sys.stderr)
+    sys.exit(1)
 
 # --- Funciones CLI y Main ---
 def run_cli(pdf_path: Path):

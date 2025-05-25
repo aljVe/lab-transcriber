@@ -81,6 +81,9 @@ RE_VALUE_UNIT = re.compile(
     r"(?:(?P<percent>%)|(?P<unit>[a-zA-Zμmcgµg/]+(?:[ \t]*[a-zA-Zμmcgµg%/²³\^]+)*\b))?"
 )
 RE_SEROLOGY = re.compile(r"\b(POSITIVO|NEGATIVO|DUDOSO)\b", re.IGNORECASE)
+RE_ORINA_CUALITATIVO = re.compile(r"\b(negativo|\+{1,4}|escasa|moderada|abundante|normal|positivo)\b", re.IGNORECASE)
+# Añade cualquier otro término específico que usen, como "trazas", "indicios", etc.
+# "positivo" se añade por si acaso, aunque "+" es más común.
 
 # --- Funciones de Parsing (Continuación) ---
 def fuzzy_match_parameter(text: str, threshold=0.75) -> str | None:
@@ -114,15 +117,29 @@ def extract_value_and_unit(line_part: str) -> tuple[str | None, str | None, str 
 def validate_unit(param_std: str, found_unit: str | None, unit_type: str | None) -> bool:
     expected = EXPECTED_UNITS_OR_TYPES.get(param_std)
     valid = False
-    if isinstance(expected, (list, tuple)): valid = found_unit in expected
-    elif expected == 'abs' and unit_type == 'abs': valid = True
-    elif expected == '%' and unit_type == '%': valid = True
-    elif expected == 'status' and unit_type == 'status': valid = True
-    elif expected == 'other' and unit_type == 'other': valid = True
-    elif expected == found_unit: valid = True # Incluye None == None
-    elif expected is None and unit_type is None: valid = True
+    if expected == "status_orina_cualitativo":
+        # Para parámetros de orina cualitativos, validamos que el tipo sea el correcto
+        # y que el valor encontrado sea uno de los esperados
+        valid = (unit_type == "status_orina_cualitativo" and 
+                found_unit is not None and 
+                RE_ORINA_CUALITATIVO.match(found_unit) is not None)
+    elif isinstance(expected, (list, tuple)):
+        valid = found_unit in expected
+    elif expected == 'abs' and unit_type == 'abs':
+        valid = True
+    elif expected == '%' and unit_type == '%':
+        valid = True
+    elif expected == 'status' and unit_type == 'status':
+        valid = True
+    elif expected == 'other' and unit_type == 'other':
+        valid = True
+    elif expected == found_unit:
+        valid = True  # Incluye None == None
+    elif expected is None and unit_type is None:
+        valid = True
 
-    if not valid: logger.warning(f"Validación fallida '{param_std}': Encontrado='{found_unit}'({unit_type}), Esperado='{expected}'")
+    if not valid:
+        logger.warning(f"Validación fallida '{param_std}': Encontrado='{found_unit}'({unit_type}), Esperado='{expected}'")
     return valid
 
 def parse_report_text(raw_text: str) -> dict:
@@ -135,144 +152,128 @@ def parse_report_text(raw_text: str) -> dict:
 
     logger.info("Iniciando Pasada 1: Detección Exacta + Validación...")
     for i, line in enumerate(lines):
-        if i in processed_lines: continue
+        if i in processed_lines:
+            continue
         normalized_line = _normalize(line.strip())
-        if not normalized_line: continue
+        if not normalized_line:
+            continue
 
-        best_match_for_line = None; found_by_exact = False
+        best_match_for_line = None
+        found_by_exact = False
 
         for norm_alias in sorted_normalized_aliases:
             try:
                 start_index = normalized_line.find(norm_alias)
                 if start_index != -1:
-                    end_index = start_index + len(norm_alias)
-                    is_whole = (start_index == 0 or normalized_line[start_index-1].isspace()) and \
-                               (end_index == len(normalized_line) or normalized_line[end_index].isspace() or \
-                                normalized_line[end_index].isdigit() or normalized_line[end_index] in '<>')
-                    if is_whole:
-                        param_std = alias_to_std_name_map[norm_alias]
-                        category = param_to_category_map.get(param_std)
-                        if not category: continue
-                        line_remainder = line[start_index + len(norm_alias):].strip()
-                        temp_value_match = None; temp_search_line_idx = -1
+                    # 1. Recopilar todos los param_std que pueden usar este `norm_alias`
+                    candidate_params = []
+                    for p_std, alias_list_cfg in PARAM_ALIASES.items():
+                        for alias_cfg in alias_list_cfg:
+                            if _normalize(alias_cfg) == norm_alias:
+                                candidate_params.append(p_std)
+                                break  # Ya encontramos que este p_std usa el norm_alias
 
-                        if category == "Serologías":
-                            serology_match = RE_SEROLOGY.search(line_remainder)
-                            if serology_match and serology_match.start() < 15: temp_value_match = serology_match; temp_search_line_idx = i
-                            elif i + 1 < len(lines) and (i+1) not in processed_lines:
-                                 serology_match_next = RE_SEROLOGY.search(lines[i+1])
-                                 if serology_match_next and len(lines[i+1].strip()) < 20: temp_value_match = serology_match_next; temp_search_line_idx = i + 1
-                        else:
-                            numeric_match = RE_VALUE_UNIT.search(line_remainder)
-                            if numeric_match and numeric_match.start() < 10: temp_value_match = numeric_match; temp_search_line_idx = i
-                            elif i + 1 < len(lines) and (i+1) not in processed_lines:
-                                numeric_match_next = RE_VALUE_UNIT.match(lines[i+1].strip())
-                                if numeric_match_next: temp_value_match = numeric_match_next; temp_search_line_idx = i + 1
+                    found_match_for_this_alias_on_line = False
+                    for param_candidate_std in candidate_params:
+                        category = param_to_category_map.get(param_candidate_std)
+                        if not category:
+                            continue
+                        
+                        # Evitar sobreescribir un parámetro ya parseado y validado para esta categoría
+                        if param_candidate_std in results_intermediate[category]:
+                            continue
 
-                        if temp_value_match:
-                            best_match_for_line = (param_std, temp_value_match, temp_search_line_idx, line_remainder)
-                            logger.debug(f"Candidato Exacto línea {i+1}: '{norm_alias}'->'{param_std}' valor línea {temp_search_line_idx+1}")
-                            break
-            except Exception as e: logger.error(f"Error procesando alias '{norm_alias}' línea {i+1}: {e}", exc_info=True); continue
+                        expected_unit_config = EXPECTED_UNITS_OR_TYPES.get(param_candidate_std)
+                        
+                        # Intentar extraer valor (considerando la línea actual y la siguiente)
+                        value_info_tuple = None  # (formatted_value, actual_value_line_idx)
+                        text_to_search_value = line[start_index + len(norm_alias):]  # Parte de la línea actual
+                        potential_next_line_idx = i + 1
+                        next_line_text = lines[potential_next_line_idx] if potential_next_line_idx < len(lines) else ""
+
+                        # Intento 1: Cualitativo de Orina (si el param_candidate_std lo espera)
+                        if expected_unit_config == "status_orina_cualitativo":
+                            match_qual = RE_ORINA_CUALITATIVO.search(text_to_search_value)
+                            value_line_for_match = i
+                            if not match_qual and next_line_text:  # Intentar en la siguiente línea
+                                # Solo si la línea siguiente es corta y no parece otro parámetro
+                                if len(_normalize(next_line_text).split()) < 4: 
+                                    match_qual = RE_ORINA_CUALITATIVO.search(next_line_text)
+                                    value_line_for_match = potential_next_line_idx if match_qual else i
+                            
+                            if match_qual and match_qual.start() < 20:  # Umbral de proximidad
+                                qual_value = match_qual.group(1).lower()
+                                if validate_unit(param_candidate_std, qual_value, "status_orina_cualitativo"):
+                                    value_info_tuple = (f"{param_candidate_std}: {qual_value}", value_line_for_match)
+
+                        # Intento 2: Numérico (si el param_candidate_std lo espera y no se encontró cualitativo)
+                        elif value_info_tuple is None and isinstance(expected_unit_config, (str, list)) and expected_unit_config != "status_orina_cualitativo":
+                            sign, val_str, unit_clean, u_type = extract_value_and_unit(text_to_search_value)
+                            value_line_for_num_match = i
+                            is_on_current_line = True
+
+                            if val_str is None and next_line_text:  # Intentar en la siguiente línea
+                                if len(_normalize(next_line_text).split()) < 4 or RE_VALUE_UNIT.fullmatch(next_line_text.strip()):
+                                    sign, val_str, unit_clean, u_type = extract_value_and_unit(next_line_text)
+                                    value_line_for_num_match = potential_next_line_idx if val_str is not None else i
+                                    is_on_current_line = False if val_str is not None else True
+                            
+                            if val_str is not None:
+                                # Verificar proximidad si está en la línea actual
+                                proximity_check_ok = True
+                                if is_on_current_line:
+                                    match_num_prox = RE_VALUE_UNIT.search(text_to_search_value)
+                                    if not (match_num_prox and match_num_prox.start() < 30):  # Umbral
+                                        proximity_check_ok = False
+
+                                if proximity_check_ok and validate_unit(param_candidate_std, unit_clean, u_type):
+                                    formatted_val = f"{param_candidate_std}: {sign}{val_str}"
+                                    if unit_clean:
+                                        formatted_val += f" {unit_clean}"
+                                    value_info_tuple = (formatted_val, value_line_for_num_match)
+                        
+                        if value_info_tuple:
+                            formatted_value, actual_value_line_idx = value_info_tuple
+                            logger.info(f"Parseado (Desambiguado): {formatted_value} para '{param_candidate_std}' (Línea Alias: {i+1}, Línea Valor: {actual_value_line_idx+1})")
+                            results_intermediate[category][param_candidate_std] = (formatted_value, "exact", actual_value_line_idx)
+                            processed_lines.add(i)
+                            if actual_value_line_idx != i:
+                                processed_lines.add(actual_value_line_idx)
+                            
+                            found_match_for_this_alias_on_line = True
+                            break  # Salir del bucle de `param_candidate_std`
+
+                    if found_match_for_this_alias_on_line:
+                        break  # Salir del bucle de `sorted_normalized_aliases`
+
+            except Exception as e:
+                logger.error(f"Error procesando alias '{norm_alias}' línea {i+1}: {e}", exc_info=True)
+                continue
 
         if not best_match_for_line:
-            if i not in processed_lines and RE_VALUE_UNIT.search(line): unrecognized_lines_with_values.append((i, line))
+            if i not in processed_lines and RE_VALUE_UNIT.search(line):
+                unrecognized_lines_with_values.append((i, line))
             continue
 
-        param_std, value_match, search_line_idx, line_remainder_orig = best_match_for_line
-        if search_line_idx in processed_lines: continue
-
-        category = param_to_category_map[param_std]
-        existing_data = results_intermediate[category].get(param_std)
-        current_value_str = None; current_unit_type = None; unit_final_formatted = None; valid_unit_found = False
-
-        if category == "Serologías":
-            status = value_match.group(1).lower()
-            current_value_str = f"{param_std}: {status}"
-            current_unit_type = "status"
-            if validate_unit(param_std, None, current_unit_type):
-                valid_unit_found = True
-                logger.info(f"Parseado Serología: {current_value_str} (Línea {search_line_idx+1})")
-        else:
-            sign, value, unit, unit_type = extract_value_and_unit(value_match.string)
-            if value is not None:
-                if validate_unit(param_std, unit, unit_type):
-                    valid_unit_found = True
-                    unit_final_formatted = unit
-                    current_unit_type = unit_type
-                    if param_std == "F. glomerular calculado":
-                         full_unit_pattern = r"ml/min/1[.,]73m[2²\^]"
-                         if re.search(full_unit_pattern, line_remainder_orig, re.IGNORECASE) or \
-                           (search_line_idx == i + 1 and re.search(full_unit_pattern, lines[search_line_idx], re.IGNORECASE)):
-                             unit_final_formatted = "ml/min/1.73m²"; current_unit_type = 'other'
-                         elif sign == '>' and unit_final_formatted is None:
-                              unit_final_formatted = "ml/min/1.73m²"; current_unit_type = 'other'
-                    current_value_str = f"{param_std}: {sign}{value}{' ' + unit_final_formatted if unit_final_formatted else ''}"
-                    logger.info(f"Parseado y VALIDADO Numérico: {current_value_str} (Tipo: {current_unit_type}) (Línea {search_line_idx+1})")
-
-        if valid_unit_found and current_value_str:
-            should_replace = False; existing_unit_type = existing_data[1] if existing_data else None
-            if not existing_data: should_replace = True
-            else:
-                priority_map = {'abs': 5, 'other': 4, '%': 3, 'status': 2, None: 1}
-                current_priority = priority_map.get(current_unit_type, 0)
-                existing_priority = priority_map.get(existing_unit_type, 0)
-                if current_priority >= existing_priority: should_replace = True
-
-            if should_replace:
-                 logger.debug(f"Exact Match: Guardando '{param_std}' (Tipo: {current_unit_type}) valor línea {search_line_idx+1}")
-                 # *** GUARDAR LINE INDEX ***
-                 results_intermediate[category][param_std] = (current_value_str.strip(), current_unit_type, "exact", search_line_idx)
-                 processed_lines.add(search_line_idx)
-                 if i != search_line_idx and i not in processed_lines: processed_lines.add(i)
-                 found_by_exact = True
-            # else: logger.debug(...)
-
-        if not found_by_exact and i not in processed_lines and RE_VALUE_UNIT.search(line):
-             if not any(l[0] == i for l in unrecognized_lines_with_values):
-                 unrecognized_lines_with_values.append((i, line))
-
-    logger.info("Iniciando Pasada 2: Fuzzy Matching + Validación...")
-    fuzzy_found_count = 0
-    for i, line in unrecognized_lines_with_values:
-        if i in processed_lines: continue
-        potential_param_std = fuzzy_match_parameter(line, threshold=0.70)
-        if potential_param_std:
-            category = param_to_category_map.get(potential_param_std)
-            if not category: continue
-            sign, value, unit, unit_type = extract_value_and_unit(line)
-            if value is not None:
-                if validate_unit(potential_param_std, unit, unit_type):
-                    existing_data = results_intermediate[category].get(potential_param_std)
-                    if not existing_data or existing_data[2] != "exact": # Solo si no hay exacto
-                        unit_final = unit
-                        formatted_value = f"{potential_param_std}: {sign}{value}{' ' + unit_final if unit_final else ''}"
-                        detection_method = "fuzzy"
-                        logger.info(f"Fuzzy Match: Guardando '{potential_param_std}' (Tipo: {unit_type}) valor línea {i+1}")
-                        # *** GUARDAR LINE INDEX (i) ***
-                        results_intermediate[category][potential_param_std] = (formatted_value.strip(), unit_type, detection_method, i)
-                        processed_lines.add(i); fuzzy_found_count += 1
-                # else: logger ya advirtió
-
     # --- Formatear salida final (preparando para formatter) ---
-    # Devolver dict { Categoria: { StdName: (FormattedValue_with_Marker, LineIndex) } }
     final_results_for_formatter = defaultdict(dict)
     unique_params_count = 0
     for category, items in results_intermediate.items():
-        for std_name, (formatted_value, unit_type, detection_method, line_idx) in items.items():
-             if formatted_value:
-                 display_value = formatted_value + " [~]" if detection_method == "fuzzy" else formatted_value
-                 # Asegurar % final
-                 expected_type_for_std = EXPECTED_UNITS_OR_TYPES.get(std_name)
-                 if expected_type_for_std == '%' and unit_type == '%' and not display_value.replace(' [~]', '').endswith('%'):
-                      parts = display_value.split(":", 1); val_part = parts[1].replace('[~]', '').strip().split(" ")[0]
-                      display_value = f"{std_name}: {val_part} %{' [~]' if detection_method == 'fuzzy' else ''}"
+        for std_name, (formatted_value, detection_method, line_idx) in items.items():
+            if formatted_value:
+                display_value = formatted_value + " [~]" if detection_method == "fuzzy" else formatted_value
+                # Asegurar % final
+                expected_type_for_std = EXPECTED_UNITS_OR_TYPES.get(std_name)
+                if expected_type_for_std == '%' and not display_value.replace(' [~]', '').endswith('%'):
+                    parts = display_value.split(":", 1)
+                    val_part = parts[1].replace('[~]', '').strip().split(" ")[0]
+                    display_value = f"{std_name}: {val_part} %{' [~]' if detection_method == 'fuzzy' else ''}"
 
-                 final_results_for_formatter[category][std_name] = (display_value, line_idx) # Guardar tupla
-                 unique_params_count += 1
+                final_results_for_formatter[category][std_name] = (display_value, line_idx)
+                unique_params_count += 1
 
     logger.info(f"Parseo finalizado. {unique_params_count} parámetros únicos para formatear.")
-    return dict(final_results_for_formatter) # Devolver dict listo para formatear
+    return dict(final_results_for_formatter)
 
 # --- Funciones de Diagnóstico ---
 # (get_unrecognized_lines y analyze_detection_success se mantienen igual que v1.2.2)
