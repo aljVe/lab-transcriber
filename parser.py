@@ -78,7 +78,7 @@ UNIT_CLEAN: dict[str, str] = {
 }
 RE_VALUE_UNIT = re.compile(
     r"(?P<sign>[><]?)\s*"r"(?P<value>[\d]+(?:[.,]\d+)?)\s*"
-    r"(?:[↑↓▲▼⬆⬇]\s*)?"  # Ignorar flechas opcionales (alto/bajo)
+    r"(?:[\u2191\u2193\u25B2\u25BC\u2B06\u2B07]\s*)?"  # Ignorar flechas opcionales (↑↓▲▼⬆⬇)
     r"(?:(?P<percent>%)|(?P<unit>[a-zA-Zμmcgµg/]+(?:[ \t]*[a-zA-Zμmcgµg%/²³\^]+)*\b))?"
 )
 RE_SEROLOGY = re.compile(r"\b(POSITIVO|NEGATIVO|DUDOSO)\b", re.IGNORECASE)
