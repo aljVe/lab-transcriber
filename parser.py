@@ -48,13 +48,16 @@ PARAM_ALIASES = CONFIG.get("aliases", {})
 CATEGORY_MAP = CONFIG.get("category_map", {})
 EXPECTED_UNITS_OR_TYPES = CONFIG.get("expected_units", {})
 param_to_category_map: dict[str, str] = { std: cat for cat, stds in CATEGORY_MAP.items() for std in stds }
-alias_to_std_name_map: dict[str, str] = {}
+# Permitir aliases duplicados: cada alias puede apuntar a múltiples parámetros
+alias_to_std_name_map: dict[str, list[str]] = defaultdict(list)
 for std_name, alias_list in PARAM_ALIASES.items():
     if not isinstance(alias_list, list): logger.warning(f"Valor para alias '{std_name}' no es lista."); continue
     for alias in alias_list:
         normalized_alias = _normalize(alias)
-        if normalized_alias in alias_to_std_name_map: logger.warning(f"Alias duplicado '{normalized_alias}' (apunta a '{std_name}').")
-        alias_to_std_name_map[normalized_alias] = std_name
+        if std_name not in alias_to_std_name_map[normalized_alias]:
+            alias_to_std_name_map[normalized_alias].append(std_name)
+        if len(alias_to_std_name_map[normalized_alias]) > 1:
+            logger.debug(f"Alias '{normalized_alias}' apunta a múltiples parámetros: {alias_to_std_name_map[normalized_alias]}")
 sorted_normalized_aliases = sorted(alias_to_std_name_map.keys(), key=len, reverse=True)
 
 # --- Constantes y Regex ---
@@ -85,16 +88,18 @@ RE_VALUE_UNIT = re.compile(
 RE_SEROLOGY = re.compile(r"\b(POSITIVO|NEGATIVO|DUDOSO)\b", re.IGNORECASE)
 
 # --- Funciones de Parsing (Continuación) ---
-def fuzzy_match_parameter(text: str, threshold=0.75) -> str | None:
+def fuzzy_match_parameter(text: str, threshold=0.75) -> list[str]:
+    """Retorna lista de posibles parámetros que matchean (puede ser vacía o múltiple)."""
     cleaned_text = _normalize(re.sub(r'[:\d.,<>()\[\]~]', ' ', text))
-    if not cleaned_text: return None
-    best_match_std = None; best_score = threshold
-    for norm_alias, std_name in alias_to_std_name_map.items():
+    if not cleaned_text: return []
+    best_match_std_list = []; best_score = threshold
+    for norm_alias, std_name_list in alias_to_std_name_map.items():
          if len(norm_alias) > 2:
              score = SequenceMatcher(None, cleaned_text, norm_alias).ratio()
-             if score >= best_score: best_score = score; best_match_std = std_name
-    if best_match_std: logger.debug(f"Fuzzy: '{text[:30]}...' -> '{best_match_std}' (Score: {best_score:.2f})")
-    return best_match_std
+             if score > best_score: best_score = score; best_match_std_list = std_name_list.copy()
+             elif score == best_score and std_name_list: best_match_std_list.extend([s for s in std_name_list if s not in best_match_std_list])
+    if best_match_std_list: logger.debug(f"Fuzzy: '{text[:30]}...' -> {best_match_std_list} (Score: {best_score:.2f})")
+    return best_match_std_list
 
 def extract_value_and_unit(line_part: str) -> tuple[str | None, str | None, str | None, str | None]:
     match = RE_VALUE_UNIT.search(line_part)
@@ -152,29 +157,44 @@ def parse_report_text(raw_text: str) -> dict:
                                (end_index == len(normalized_line) or normalized_line[end_index].isspace() or \
                                 normalized_line[end_index].isdigit() or normalized_line[end_index] in '<>')
                     if is_whole:
-                        param_std = alias_to_std_name_map[norm_alias]
-                        category = param_to_category_map.get(param_std)
-                        if not category: continue
+                        # Un alias puede apuntar a múltiples parámetros (ej: "Glucosa" -> sangre y orina)
+                        param_std_candidates = alias_to_std_name_map[norm_alias]
                         line_remainder = line[start_index + len(norm_alias):].strip()
-                        temp_value_match = None; temp_search_line_idx = -1
 
-                        if category == "Serologías":
-                            serology_match = RE_SEROLOGY.search(line_remainder)
-                            if serology_match and serology_match.start() < 15: temp_value_match = serology_match; temp_search_line_idx = i
-                            elif i + 1 < len(lines) and (i+1) not in processed_lines:
-                                 serology_match_next = RE_SEROLOGY.search(lines[i+1])
-                                 if serology_match_next and len(lines[i+1].strip()) < 20: temp_value_match = serology_match_next; temp_search_line_idx = i + 1
-                        else:
-                            numeric_match = RE_VALUE_UNIT.search(line_remainder)
-                            if numeric_match and numeric_match.start() < 10: temp_value_match = numeric_match; temp_search_line_idx = i
-                            elif i + 1 < len(lines) and (i+1) not in processed_lines:
-                                numeric_match_next = RE_VALUE_UNIT.match(lines[i+1].strip())
-                                if numeric_match_next: temp_value_match = numeric_match_next; temp_search_line_idx = i + 1
+                        # Probar cada candidato hasta encontrar uno con unidades válidas
+                        for param_std in param_std_candidates:
+                            category = param_to_category_map.get(param_std)
+                            if not category: continue
+                            temp_value_match = None; temp_search_line_idx = -1
 
-                        if temp_value_match:
-                            best_match_for_line = (param_std, temp_value_match, temp_search_line_idx, line_remainder)
-                            logger.debug(f"Candidato Exacto línea {i+1}: '{norm_alias}'->'{param_std}' valor línea {temp_search_line_idx+1}")
-                            break
+                            if category == "Serologías":
+                                serology_match = RE_SEROLOGY.search(line_remainder)
+                                if serology_match and serology_match.start() < 15: temp_value_match = serology_match; temp_search_line_idx = i
+                                elif i + 1 < len(lines) and (i+1) not in processed_lines:
+                                     serology_match_next = RE_SEROLOGY.search(lines[i+1])
+                                     if serology_match_next and len(lines[i+1].strip()) < 20: temp_value_match = serology_match_next; temp_search_line_idx = i + 1
+                            else:
+                                numeric_match = RE_VALUE_UNIT.search(line_remainder)
+                                if numeric_match and numeric_match.start() < 10: temp_value_match = numeric_match; temp_search_line_idx = i
+                                elif i + 1 < len(lines) and (i+1) not in processed_lines:
+                                    numeric_match_next = RE_VALUE_UNIT.match(lines[i+1].strip())
+                                    if numeric_match_next: temp_value_match = numeric_match_next; temp_search_line_idx = i + 1
+
+                            if temp_value_match:
+                                # Validar unidades antes de aceptar el candidato
+                                if category == "Serologías":
+                                    unit_valid = validate_unit(param_std, None, "status")
+                                else:
+                                    sign, value, unit, unit_type = extract_value_and_unit(temp_value_match.string if hasattr(temp_value_match, 'string') else line_remainder)
+                                    unit_valid = validate_unit(param_std, unit, unit_type) if value else False
+
+                                if unit_valid:
+                                    best_match_for_line = (param_std, temp_value_match, temp_search_line_idx, line_remainder)
+                                    logger.debug(f"Candidato Exacto línea {i+1}: '{norm_alias}'->'{param_std}' (validado) valor línea {temp_search_line_idx+1}")
+                                    break  # Salir del loop de candidatos
+
+                        if best_match_for_line:
+                            break  # Salir del loop de aliases
             except Exception as e: logger.error(f"Error procesando alias '{norm_alias}' línea {i+1}: {e}", exc_info=True); continue
 
         if not best_match_for_line:
@@ -238,23 +258,26 @@ def parse_report_text(raw_text: str) -> dict:
     fuzzy_found_count = 0
     for i, line in unrecognized_lines_with_values:
         if i in processed_lines: continue
-        potential_param_std = fuzzy_match_parameter(line, threshold=0.70)
-        if potential_param_std:
-            category = param_to_category_map.get(potential_param_std)
-            if not category: continue
-            sign, value, unit, unit_type = extract_value_and_unit(line)
-            if value is not None:
-                if validate_unit(potential_param_std, unit, unit_type):
-                    existing_data = results_intermediate[category].get(potential_param_std)
-                    if not existing_data or existing_data[2] != "exact": # Solo si no hay exacto
-                        unit_final = unit
-                        formatted_value = f"{potential_param_std}: {sign}{value}{' ' + unit_final if unit_final else ''}"
-                        detection_method = "fuzzy"
-                        logger.info(f"Fuzzy Match: Guardando '{potential_param_std}' (Tipo: {unit_type}) valor línea {i+1}")
-                        # *** GUARDAR LINE INDEX (i) ***
-                        results_intermediate[category][potential_param_std] = (formatted_value.strip(), unit_type, detection_method, i)
-                        processed_lines.add(i); fuzzy_found_count += 1
-                # else: logger ya advirtió
+        potential_param_std_list = fuzzy_match_parameter(line, threshold=0.70)
+        if potential_param_std_list:
+            # Probar cada candidato hasta encontrar uno con unidades válidas
+            for potential_param_std in potential_param_std_list:
+                category = param_to_category_map.get(potential_param_std)
+                if not category: continue
+                sign, value, unit, unit_type = extract_value_and_unit(line)
+                if value is not None:
+                    if validate_unit(potential_param_std, unit, unit_type):
+                        existing_data = results_intermediate[category].get(potential_param_std)
+                        if not existing_data or existing_data[2] != "exact": # Solo si no hay exacto
+                            unit_final = unit
+                            formatted_value = f"{potential_param_std}: {sign}{value}{' ' + unit_final if unit_final else ''}"
+                            detection_method = "fuzzy"
+                            logger.info(f"Fuzzy Match: Guardando '{potential_param_std}' (Tipo: {unit_type}) valor línea {i+1}")
+                            # *** GUARDAR LINE INDEX (i) ***
+                            results_intermediate[category][potential_param_std] = (formatted_value.strip(), unit_type, detection_method, i)
+                            processed_lines.add(i); fuzzy_found_count += 1
+                            break  # Salir del loop de candidatos cuando encontremos uno válido
+                    # else: logger ya advirtió
 
     # --- Formatear salida final (preparando para formatter) ---
     # Devolver dict { Categoria: { StdName: (FormattedValue_with_Marker, LineIndex) } }
@@ -316,7 +339,8 @@ def analyze_detection_success(raw_text: str, parsed_data: dict) -> dict:
                       if re.search(r'\b' + re.escape(num_str_final) + r'\b', line_strip.replace(',', '.')):
                            recognized_in_line = True; break
             if not recognized_in_line and not re.match(r'\s*[\d\s-]+$', line_strip):
-                potential_param = fuzzy_match_parameter(line_strip, threshold=0.65)
+                potential_param_list = fuzzy_match_parameter(line_strip, threshold=0.65)
+                potential_param = potential_param_list[0] if potential_param_list else None
                 potential_param_lines.append({"line": line_strip, "potential_param": potential_param})
 
     detected_count = sum(len(v) for v in parsed_data.values())
