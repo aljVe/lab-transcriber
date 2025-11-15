@@ -94,5 +94,16 @@ Para distribuir el programa:
 
 ## Cambios en v1.3.6
 
-- Soporte para flechas de indicadores (↑↓▲▼⬆⬇) en valores de laboratorio
-- Mejora en la detección de parámetros con diferentes formatos de hospitales
+### Nuevas Características
+- ✅ Soporte para flechas de indicadores (↑↓▲▼⬆⬇) en valores de laboratorio
+- ✅ Gestión inteligente de aliases duplicados mediante validación de unidades
+- ✅ Compatibilidad ampliada con formatos de múltiples hospitales
+- ✅ Nuevas unidades: 10E3/µL, 10E6/µL, UI/L, µg/dL, s (segundos)
+- ✅ Nuevos aliases para nombres de parámetros en formatos específicos hospitalarios
+
+### Mejoras Técnicas
+- Parser más robusto con mejor manejo de Unicode
+- Validación de unidades más estricta para evitar detecciones incorrectas
+- Resolución automática de ambigüedades (ej: Glucosa sangre vs orina)
+
+Esta versión mejora significativamente la compatibilidad con diferentes formatos de laboratorio.
