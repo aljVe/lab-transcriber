@@ -61,7 +61,7 @@ for std_name, alias_list in PARAM_ALIASES.items():
 sorted_normalized_aliases = sorted(alias_to_std_name_map.keys(), key=len, reverse=True)
 
 # --- Constantes y Regex ---
-ABS_UNITS = {"x10³/mm³"}
+ABS_UNITS = {"x10³/mm³", "10E3/µL", "10E6/µL"}
 UNIT_CLEAN: dict[str, str] = {
     "mg/dL": "mg/dl", "mg/dl": "mg/dl", "g/dL": "g/dl", "g/dl": "g/dl", "g/L": "g/L",
     "U/L": "U/L", "u/l": "U/L", "UI/L": "U/L", "KU/L": "KU/L", "UI/ML": "UI/mL", "UI/ml": "UI/mL",
@@ -78,7 +78,9 @@ UNIT_CLEAN: dict[str, str] = {
     "fl": "fL", "pg": "pg", "mm":"mm", "segundos":"seg", "s":"seg",
     "mil/mm3": "x10³/mm³", "mill/mm3": "x10³/mm³",
     "mil/mm": "x10³/mm³", "mill/mm": "x10³/mm³",
-    "mil/": "x10³/mm³", "mill/": "x10³/mm³", "%": "%",
+    "mil/": "x10³/mm³", "mill/": "x10³/mm³",
+    "10E3/µL": "10E3/µL", "10E6/µL": "10E6/µL", "10E3/uL": "10E3/µL", "10E6/uL": "10E6/µL",
+    "%": "%",
 }
 RE_VALUE_UNIT = re.compile(
     r"(?P<sign>[><]?)\s*"r"(?P<value>[\d]+(?:[.,]\d+)?)\s*"
