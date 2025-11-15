@@ -61,7 +61,7 @@ sorted_normalized_aliases = sorted(alias_to_std_name_map.keys(), key=len, revers
 ABS_UNITS = {"x10³/mm³"}
 UNIT_CLEAN: dict[str, str] = {
     "mg/dL": "mg/dl", "mg/dl": "mg/dl", "g/dL": "g/dl", "g/dl": "g/dl", "g/L": "g/L",
-    "U/L": "U/L", "u/l": "U/L", "KU/L": "KU/L", "UI/ML": "UI/mL", "UI/ml": "UI/mL",
+    "U/L": "U/L", "u/l": "U/L", "UI/L": "U/L", "KU/L": "KU/L", "UI/ML": "UI/mL", "UI/ml": "UI/mL",
     "mmol/L": "mmol/L", "mmol/l": "mmol/L", "mmol/mol": "mmol/mol",
     "mL/min/1.73m2": "ml/min/1.73m²", "mL/min/1.73m^2": "ml/min/1.73m²",
     "mL/min/1,73m2": "ml/min/1.73m²", "ml/min/1.73m2": "ml/min/1.73m²",
@@ -70,8 +70,9 @@ UNIT_CLEAN: dict[str, str] = {
     "pg/mL": "pg/ml", "pg/ml": "pg/ml", "mU/L": "mU/L", "mU/l": "mU/L",
     "μg/L": "mcg/L", "µg/L": "mcg/L", "mcg/L": "mcg/L",
     "μg/dl": "mcg/dl", "µg/dl": "mcg/dl", "mcg/dl": "mcg/dl",
+    "μg/dL": "mcg/dl", "µg/dL": "mcg/dl", "mcg/dL": "mcg/dl",
     "microg/dl": "mcg/dl", "microgr/dl":"mcg/dl",
-    "fl": "fL", "pg": "pg", "mm":"mm", "segundos":"seg",
+    "fl": "fL", "pg": "pg", "mm":"mm", "segundos":"seg", "s":"seg",
     "mil/mm3": "x10³/mm³", "mill/mm3": "x10³/mm³",
     "mil/mm": "x10³/mm³", "mill/mm": "x10³/mm³",
     "mil/": "x10³/mm³", "mill/": "x10³/mm³", "%": "%",
